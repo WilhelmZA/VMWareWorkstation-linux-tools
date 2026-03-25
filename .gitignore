@@ -1,0 +1,10 @@
+# Compiled kernel module artefacts
+*.ko
+*.o
+*.mod.c
+*.mod
+modules.order
+Module.symvers
+
+# Config file backups
+*.bak

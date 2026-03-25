@@ -165,6 +165,86 @@ This tool does not try to be a general VMware network manager. It solves one spe
 
 ---
 
+## module-builder — rebuild kernel modules after a kernel update
+
+### The problem
+
+VMware Workstation ships its `vmmon` and `vmnet` kernel modules as source tarballs that must be compiled against the running kernel's headers. After every kernel update the old `.ko` files no longer match and VMware refuses to start. On systems with Secure Boot enabled, modules also need to be signed with an enrolled MOK key before the kernel will load them.
+
+### The solution
+
+The module builder automates the entire lifecycle using the module sources that VMware Workstation ships itself (`/usr/lib/vmware/modules/source/`):
+
+1. Extracts `vmmon.tar` and `vmnet.tar` from the VMware installation into a temporary build directory
+2. Builds `vmmon.ko` and `vmnet.ko` against the target kernel's headers
+3. Signs both modules with your MOK key pair (skips gracefully if Secure Boot is not in use)
+4. Installs the `.ko` files to `/lib/modules/<kver>/misc/`
+5. Runs `depmod`, reloads the modules, and restarts VMware services
+
+A kernel post-install hook fires automatically whenever apt installs a new kernel, so modules are rebuilt before you even reboot.
+
+### Installation
+
+Run the setup wizard once as root:
+
+```bash
+sudo ./vmwareworkstation-module-builder/setup_vmwareworkstation-module-builder.sh
+```
+
+The wizard will:
+
+1. **MOK key pair** — generate a signing key and certificate in `/etc/vmwareworkstation-module-builder/`, then run `mokutil --import` to queue enrollment. You will need to reboot and approve the MOK in the UEFI MOK Manager screen before signed modules will load.
+2. **Post-install hook** — install `/etc/kernel/postinst.d/vmwareworkstation-module-builder` so future kernel updates trigger an automatic rebuild.
+3. **Build** — optionally build and install modules for the running kernel immediately.
+
+The wizard installs:
+
+- `/usr/local/sbin/vmwareworkstation-module-builder.sh`
+- `/etc/vmwareworkstation-module-builder.conf`
+- `/etc/vmwareworkstation-module-builder/MOK.priv` and `MOK.crt`
+- `/etc/kernel/postinst.d/vmwareworkstation-module-builder`
+
+### Secure Boot and MOK keys
+
+The private key is stored in `/etc/vmwareworkstation-module-builder/` with root-only access (`chmod 600`). No passphrase is used — this matches how DKMS handles its own signing key, and is necessary for automated post-install builds to sign without user interaction. Access is controlled by filesystem permissions rather than encryption.
+
+After `mokutil --import` you must reboot and complete enrollment in the UEFI MOK Manager before signed modules will be accepted by the kernel. The setup wizard gives you step-by-step instructions and will not run the first build until enrollment is confirmed.
+
+### Manual run
+
+To rebuild for the currently running kernel:
+
+```bash
+sudo /usr/local/sbin/vmwareworkstation-module-builder.sh
+```
+
+To build for a specific kernel (e.g. before rebooting into it):
+
+```bash
+sudo /usr/local/sbin/vmwareworkstation-module-builder.sh --kernel 6.14.0-15-generic
+```
+
+### Configuration
+
+All settings are in `/etc/vmwareworkstation-module-builder.conf`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MODULES_TARBALLS` | `/usr/lib/vmware/modules/source` | Directory containing `vmmon.tar` and `vmnet.tar` shipped by VMware Workstation. |
+| `MOK_KEY` | `/etc/vmwareworkstation-module-builder/MOK.priv` | MOK private key. Leave unset to skip signing. |
+| `MOK_CERT` | `/etc/vmwareworkstation-module-builder/MOK.crt` | MOK certificate. |
+| `KVER` | `$(uname -r)` | Kernel version to build for. Also overridable via `--kernel` flag. |
+| `LOG_FILE` | `/var/log/vmwareworkstation-module-builder.log` | Set to `""` to disable logging. |
+
+### Assumptions
+
+- VMware Workstation is installed (ships module sources in `/usr/lib/vmware/modules/source/`)
+- `make`, `gcc` (`build-essential`) are installed
+- `linux-headers-<kver>` is available for the target kernel
+- For Secure Boot: `openssl` and `mokutil` are installed
+
+---
+
 ## Related
 
 [TailScaler](https://github.com/WilhelmZA/TailScaler) — fixes Tailscale and ZScaler firewall rule conflicts on the same Linux host.
